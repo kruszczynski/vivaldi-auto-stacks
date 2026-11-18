@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Stacks",
+  "version": "0.1.0",
+  "description": "Automatically stacks tabs by domain, and regroups them by topic with Claude on demand.",
+  "permissions": ["tabs", "tabGroups", "storage", "contextMenus"],
+  "host_permissions": ["https://api.anthropic.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "AI regroup tabs in this window" },
+  "options_page": "options.html",
+  "commands": {
+    "ai-regroup": {
+      "suggested_key": { "default": "Alt+Shift+G" },
+      "description": "AI regroup tabs in this window by topic"
+    },
+    "domain-regroup": {
+      "suggested_key": { "default": "Alt+Shift+D" },
+      "description": "Restack all tabs in this window by domain"
+    }
+  }
+}
