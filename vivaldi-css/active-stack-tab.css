@@ -1,0 +1,12 @@
+/* Auto Stacks: color the active tab inside a colored stack with a darker shade of the
+   stack color, instead of the theme's grey. Vivaldi only colors inactive stacked tabs
+   (`.tab-position.colored .tab:not(.active)` uses --stackColorBg). Checked against Vivaldi 8.3. */
+
+#browser .tab-position.colored .tab.active {
+  color: var(--stackColorFg);
+  background-color: color-mix(in srgb, var(--stackColorBg), #000 30%);
+}
+
+#browser .tab-position.colored .tab.active:hover {
+  background-color: color-mix(in srgb, var(--stackColorBg), #000 20%);
+}

@@ -22,3 +22,9 @@ Needs a recent Vivaldi (one that maps the Chrome tab groups API to tab stacks).
 
 Pinned tabs are never touched. Stacks you make by hand, and AI stacks, are left alone by the automatic rules.
 A red `!` badge means the AI call failed (check the service worker console in `vivaldi://extensions`).
+
+## Optional: active tab color in stacks
+Vivaldi draws the active tab in a colored stack in the theme's grey. `vivaldi-css/active-stack-tab.css` gives it a darker shade of the stack color instead. To use it:
+1. Open `vivaldi://experiments` and turn on **Allow for using CSS modifications**, then restart Vivaldi.
+2. Settings > Appearance > **Custom UI Modifications**: pick this repo's `vivaldi-css` folder.
+3. Restart Vivaldi.
