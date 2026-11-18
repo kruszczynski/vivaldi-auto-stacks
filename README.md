@@ -13,6 +13,8 @@ Needs a recent Vivaldi (one that maps the Chrome tab groups API to tab stacks).
   - GitHub pull requests (`/owner/repo/pull/N`, PR lists, `github.com/pulls`) go into a **PRs** stack.
   - GitHub projects (`/orgs/x/projects/N`, `/users/x/projects/N`, repo projects) go into a separate **Projects** stack.
   
+  New tabs (the start page / speed dials) are always pulled out of any stack, so opening one from inside a stack leaves it loose until you navigate somewhere.
+
   A stack is created once 2+ loose tabs match; new matching tabs join it. Rules live in `RULES` in `background.js`.
 - **AI regroup:** click the toolbar icon or press `Alt+Shift+G`. Ungroups the window and restacks it by topic.
 - **Restack by domain:** `Alt+Shift+D`, or right-click the icon. PRs and projects still get their own stacks; every other domain with 2+ tabs is stacked by domain.

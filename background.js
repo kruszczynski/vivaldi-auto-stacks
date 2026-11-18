@@ -88,6 +88,25 @@ function ruleFor(url) {
 
 // ---------- automatic stacking ----------
 
+// Blank new tabs / the Vivaldi start page never live in a stack.
+function isNewTab(url) {
+  return /^(chrome|vivaldi):\/\/(newtab|vivaldi-webui\/startpage)\b/.test(url) || url === "about:newtab";
+}
+
+// Pull a new tab out of whatever stack the browser opened it in (yours, AI or auto).
+async function unstackNewTab(tabId) {
+  const s = await getSettings();
+  if (!s.autoDomain) return;
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return; // tab closed
+  }
+  if (tab.pinned || tab.groupId === NONE || !isNewTab(tab.url || tab.pendingUrl)) return;
+  await chrome.tabs.ungroup(tab.id);
+}
+
 async function placeTab(tabId) {
   const s = await getSettings();
   if (!s.autoDomain) return;
@@ -101,6 +120,10 @@ async function placeTab(tabId) {
   if (tab.pinned) return;
 
   const url = tab.url || tab.pendingUrl;
+  if (isNewTab(url)) {
+    if (tab.groupId !== NONE) await chrome.tabs.ungroup(tab.id);
+    return;
+  }
   const rule = ruleFor(url);
   const host = hostOf(url);
   const hostKey = host && `host:${host}`;
@@ -279,8 +302,12 @@ async function aiRegroup(windowId) {
 
 // ---------- wiring ----------
 
+chrome.tabs.onCreated.addListener((tab) => enqueue(() => unstackNewTab(tab.id)));
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.url) enqueue(() => placeTab(tabId));
+  // The browser can add a new tab to the opener's stack just after creating it.
+  else if (changeInfo.groupId !== undefined && changeInfo.groupId !== NONE) enqueue(() => unstackNewTab(tabId));
 });
 
 chrome.tabGroups.onRemoved.addListener((group) => {
