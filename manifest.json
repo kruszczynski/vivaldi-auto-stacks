@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Auto Stacks",
   "version": "0.1.0",
-  "description": "Automatically stacks tabs by domain, and regroups them by topic with Claude on demand.",
+  "description": "Automatically stacks GitHub pull requests and projects, and regroups them by topic with Claude on demand.",
   "permissions": ["tabs", "tabGroups", "storage", "contextMenus"],
   "host_permissions": ["https://api.anthropic.com/*"],
   "background": { "service_worker": "background.js" },
@@ -15,7 +15,7 @@
     },
     "domain-regroup": {
       "suggested_key": { "default": "Alt+Shift+D" },
-      "description": "Restack all tabs in this window by domain"
+      "description": "Restack this window: GitHub PRs and projects, everything else by domain"
     }
   }
 }

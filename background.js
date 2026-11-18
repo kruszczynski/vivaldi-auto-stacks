@@ -1,4 +1,4 @@
-// Auto Stacks: domain auto-stacking + on-demand AI regrouping.
+// Auto Stacks: rule-based auto-stacking + on-demand AI regrouping.
 // Uses the Chrome tabGroups API, which Vivaldi renders as tab stacks.
 
 const DEFAULTS = {
@@ -19,7 +19,9 @@ async function getSettings() {
   return { ...DEFAULTS, ...stored };
 }
 
-// Registry of groups this extension created: { [groupId]: {kind:"domain", host} | {kind:"ai"} }
+// Registry of groups this extension created:
+// { [groupId]: {kind:"auto", key} | {kind:"ai"} }
+// key is a rule key (e.g. "github-prs") or "host:<hostname>" for a manual restack by domain.
 async function getRegistry() {
   const { registry = {} } = await chrome.storage.session.get("registry");
   return registry;
@@ -28,14 +30,17 @@ async function setRegistry(registry) {
   await chrome.storage.session.set({ registry });
 }
 
-function hostOf(url) {
+function parseUrl(url) {
   try {
     const u = new URL(url);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return u.hostname.replace(/^www\./, "");
+    return u.protocol === "http:" || u.protocol === "https:" ? u : null;
   } catch {
     return null;
   }
+}
+
+function hostOf(url) {
+  return parseUrl(url)?.hostname.replace(/^www\./, "") ?? null;
 }
 
 function colorFor(str) {
@@ -56,9 +61,34 @@ async function setBadge(text, color = "#555") {
   await chrome.action.setBadgeText({ text });
 }
 
-// ---------- domain stacking ----------
+// ---------- stack rules ----------
 
-async function placeByDomain(tabId) {
+// Only URLs matching a rule are stacked automatically. First match wins.
+const RULES = [
+  {
+    key: "github-prs",
+    title: "PRs",
+    color: "purple",
+    // /owner/repo/pull/123[/files...], /owner/repo/pulls, /pulls
+    match: (u) => u.hostname === "github.com" && /^(\/[^/]+\/[^/]+)?\/pulls?(\/|$)/.test(u.pathname)
+  },
+  {
+    key: "github-projects",
+    title: "Projects",
+    color: "green",
+    // /orgs/x/projects/1, /users/x/projects/1, /owner/repo/projects
+    match: (u) => u.hostname === "github.com" && /^\/[^/]+\/[^/]+\/projects(\/|$)/.test(u.pathname)
+  }
+];
+
+function ruleFor(url) {
+  const u = parseUrl(url);
+  return (u && RULES.find((r) => r.match(u))) || null;
+}
+
+// ---------- automatic stacking ----------
+
+async function placeTab(tabId) {
   const s = await getSettings();
   if (!s.autoDomain) return;
 
@@ -70,43 +100,50 @@ async function placeByDomain(tabId) {
   }
   if (tab.pinned) return;
 
-  const host = hostOf(tab.url || tab.pendingUrl);
-  if (!host) return;
+  const url = tab.url || tab.pendingUrl;
+  const rule = ruleFor(url);
+  const host = hostOf(url);
+  const hostKey = host && `host:${host}`;
 
   const reg = await getRegistry();
 
   // Leave tabs alone if they're in an AI stack or a stack you made by hand.
   if (tab.groupId !== NONE) {
     const info = reg[tab.groupId];
-    if (!info || info.kind !== "domain") return;
-    if (info.host === host) return; // already in the right stack
+    if (info?.kind !== "auto") return;
+    if (info.key === rule?.key || info.key === hostKey) return; // already in the right stack
   }
 
-  // Join an existing domain stack for this host in this window.
+  // Join an existing stack in this window: the rule's stack first, else a manual restack-by-domain stack.
   const groups = await chrome.tabGroups.query({ windowId: tab.windowId });
-  const existing = groups.find((g) => reg[g.id]?.kind === "domain" && reg[g.id].host === host);
+  const stackWithKey = (key) =>
+    key ? groups.find((g) => reg[g.id]?.kind === "auto" && reg[g.id].key === key) : undefined;
+  const existing = stackWithKey(rule?.key) || stackWithKey(hostKey);
   if (existing) {
     await chrome.tabs.group({ groupId: existing.id, tabIds: [tab.id] });
     return;
   }
 
-  // Otherwise create one if enough loose tabs share the host.
-  const all = await chrome.tabs.query({ windowId: tab.windowId, pinned: false });
-  const siblings = all.filter(
-    (t) => t.id !== tab.id && t.groupId === NONE && hostOf(t.url || t.pendingUrl) === host
-  );
-
-  if (siblings.length + 1 >= s.minTabsForDomain) {
-    const gid = await chrome.tabs.group({ tabIds: [tab.id, ...siblings.map((t) => t.id)] });
-    await chrome.tabGroups.update(gid, { title: host, color: colorFor(host) });
-    reg[gid] = { kind: "domain", host };
-    await setRegistry(reg);
-  } else if (tab.groupId !== NONE) {
-    // Navigated away from its domain stack's host and nothing to join: pull it out.
-    await chrome.tabs.ungroup(tab.id);
+  // Otherwise create the rule's stack if enough loose tabs match it.
+  if (rule) {
+    const all = await chrome.tabs.query({ windowId: tab.windowId, pinned: false });
+    const siblings = all.filter(
+      (t) => t.id !== tab.id && t.groupId === NONE && ruleFor(t.url || t.pendingUrl)?.key === rule.key
+    );
+    if (siblings.length + 1 >= s.minTabsForDomain) {
+      const gid = await chrome.tabs.group({ tabIds: [tab.id, ...siblings.map((t) => t.id)] });
+      await chrome.tabGroups.update(gid, { title: rule.title, color: rule.color });
+      reg[gid] = { kind: "auto", key: rule.key };
+      await setRegistry(reg);
+      return;
+    }
   }
+
+  // Navigated away from its auto stack and nothing to join: pull it out.
+  if (tab.groupId !== NONE) await chrome.tabs.ungroup(tab.id);
 }
 
+// Manual restack: rule stacks where a rule matches, otherwise one stack per domain.
 async function regroupAllByDomain(windowId) {
   const s = await getSettings();
   const tabs = await chrome.tabs.query({ windowId, pinned: false });
@@ -114,20 +151,25 @@ async function regroupAllByDomain(windowId) {
 
   await chrome.tabs.ungroup(tabs.map((t) => t.id));
 
-  const byHost = new Map();
+  const byKey = new Map();
   for (const t of tabs) {
-    const h = hostOf(t.url || t.pendingUrl);
-    if (!h) continue;
-    if (!byHost.has(h)) byHost.set(h, []);
-    byHost.get(h).push(t.id);
+    const url = t.url || t.pendingUrl;
+    const rule = ruleFor(url);
+    const host = hostOf(url);
+    const stack = rule
+      ? { key: rule.key, title: rule.title, color: rule.color }
+      : host && { key: `host:${host}`, title: host, color: colorFor(host) };
+    if (!stack) continue;
+    if (!byKey.has(stack.key)) byKey.set(stack.key, { ...stack, ids: [] });
+    byKey.get(stack.key).ids.push(t.id);
   }
 
   const reg = await getRegistry();
-  for (const [host, ids] of byHost) {
+  for (const { key, title, color, ids } of byKey.values()) {
     if (ids.length < Math.max(2, s.minTabsForDomain)) continue;
     const gid = await chrome.tabs.group({ tabIds: ids });
-    await chrome.tabGroups.update(gid, { title: host, color: colorFor(host) });
-    reg[gid] = { kind: "domain", host };
+    await chrome.tabGroups.update(gid, { title, color });
+    reg[gid] = { kind: "auto", key };
   }
   await setRegistry(reg);
 }
@@ -238,7 +280,7 @@ async function aiRegroup(windowId) {
 // ---------- wiring ----------
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.url) enqueue(() => placeByDomain(tabId));
+  if (changeInfo.url) enqueue(() => placeTab(tabId));
 });
 
 chrome.tabGroups.onRemoved.addListener((group) => {
